@@ -13,6 +13,11 @@ load_dotenv()
 # ── App setup ──────────────────────────────────────────────────────────────────
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'zync-ai-store-secret-2024')
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE='None',
+    SESSION_COOKIE_HTTPONLY=True,
+)
 CORS(app, supports_credentials=True, origins=['http://localhost:5000',
                                                'http://127.0.0.1:5000',
                                                'https://ai-store-1wcn.onrender.com'])
