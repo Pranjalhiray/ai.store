@@ -32,9 +32,11 @@ try:
     if MONGO_URI:
         from pymongo import MongoClient
         client = MongoClient(MONGO_URI,
-                             serverSelectionTimeoutMS=3000,
-                             connectTimeoutMS=3000,
-                             socketTimeoutMS=3000)
+                     serverSelectionTimeoutMS=3000,
+                     connectTimeoutMS=3000,
+                     socketTimeoutMS=3000,
+                     tls=True,
+                     tlsAllowInvalidCertificates=True)
         client.admin.command('ping')  # test connection
         db = client['zync']
         users_col   = db['users']
