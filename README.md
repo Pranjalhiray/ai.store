@@ -11,7 +11,7 @@
 
 ## 🚀 Live Demo
 
-> (https://ai-store-1wcn.onrender.com)
+> > 🌐 **Live:** https://ai-store-1wcn.onrender.com
 
 ---
 
