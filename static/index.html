@@ -3,12 +3,14 @@
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>NOVA — AI Powered Store</title>
+<title>ZYNC — AI Powered Store</title>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:opsz,wght@9..40,300;400;500;600;700&display=swap" rel="stylesheet"/>
 <style>
 /* ── Reset & Variables ─────────────────────────────────────────── */
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* ── DARK THEME (default) ───────────────────────────────────────── */
 :root{
   --bg:        #080b12;
   --bg2:       #0e1320;
@@ -35,6 +37,52 @@
   --font-s:    'DM Sans', system-ui, sans-serif;
   --transition: 0.22s cubic-bezier(0.4,0,0.2,1);
 }
+
+/* ── LIGHT THEME ────────────────────────────────────────────────── */
+[data-theme="light"]{
+  --bg:        #faf7f2;
+  --bg2:       #ffffff;
+  --bg3:       #f3ede3;
+  --border:    rgba(0,0,0,0.07);
+  --border2:   rgba(0,0,0,0.13);
+  --text:      #1a1208;
+  --text2:     #6b5c3e;
+  --text3:     #a8936a;
+  --accent:    #b8760e;
+  --accent2:   #d4920f;
+  --accent-bg: rgba(184,118,14,0.09);
+  --accent-bd: rgba(184,118,14,0.25);
+  --blue:      #1a6fbf;
+  --blue-bg:   rgba(26,111,191,0.08);
+  --green:     #1a7a4a;
+  --red:       #c0392b;
+  --purple:    #6d3fbd;
+  --shadow:    0 8px 32px rgba(0,0,0,0.1);
+  --shadow-sm: 0 2px 12px rgba(0,0,0,0.07);
+}
+[data-theme="light"] ::-webkit-scrollbar-track{background:#f3ede3}
+[data-theme="light"] ::-webkit-scrollbar-thumb{background:#d4b896}
+[data-theme="light"] #navbar{background:rgba(250,247,242,0.92)!important}
+[data-theme="light"] #promo-bar{background:linear-gradient(90deg,#fdf3e0,#fef9ef,#fdf3e0)}
+[data-theme="light"] .hero-grid .hero-card-mini{background:#fff;border-color:rgba(0,0,0,0.08)}
+[data-theme="light"] .search-results-dropdown{background:#fff}
+[data-theme="light"] .drawer{background:#fff}
+[data-theme="light"] .modal-box{background:#fff}
+[data-theme="light"] .user-dropdown{background:#fff!important}
+[data-theme="light"] .btn-icon{background:rgba(0,0,0,0.05);color:var(--text2)}
+[data-theme="light"] .btn-icon:hover{background:rgba(0,0,0,0.09)}
+[data-theme="light"] .product-card{background:#fff}
+[data-theme="light"] .card-img-wrap{background:#f3ede3}
+[data-theme="light"] .card-wish{background:rgba(250,247,242,0.9)}
+[data-theme="light"] #hero{background:radial-gradient(ellipse at 20% 60%,rgba(184,118,14,0.1) 0%,transparent 55%),radial-gradient(ellipse at 80% 20%,rgba(26,111,191,0.06) 0%,transparent 50%),var(--bg)}
+[data-theme="light"] .theme-toggle-icon-dark{display:none}
+[data-theme="light"] .theme-toggle-icon-light{display:inline}
+
+/* Theme toggle button */
+.theme-toggle{width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,0.06);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;cursor:pointer;font-size:18px;transition:all var(--transition);flex-shrink:0}
+.theme-toggle:hover{background:var(--accent-bg);border-color:var(--accent)}
+.theme-toggle-icon-light{display:none}
+.theme-toggle-icon-dark{display:inline}
 html{scroll-behavior:smooth}
 body{background:var(--bg);color:var(--text);font-family:var(--font-s);font-size:15px;line-height:1.6;overflow-x:hidden;min-height:100vh}
 
@@ -387,7 +435,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <body>
 
 <!-- Promo bar -->
-<div id="promo-bar">🎁 <strong>FREE SHIPPING</strong> on orders over ₹999 &nbsp;|&nbsp; Use code <strong>NOVA20</strong> for 20% off your first order &nbsp;|&nbsp; 🤖 <strong>AI Recommendations</strong> get smarter as you shop!</div>
+<div id="promo-bar">🎁 <strong>FREE SHIPPING</strong> on orders over ₹999 &nbsp;|&nbsp; Use code <strong>ZYNC20</strong> for 20% off your first order &nbsp;|&nbsp; 🤖 <strong>AI Recommendations</strong> get smarter as you shop!</div>
 
 <!-- Toast container -->
 <div id="toast-container"></div>
@@ -399,7 +447,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <nav id="navbar">
   <div class="container">
     <div class="nav-inner">
-      <div class="logo" onclick="showPage('home')">NOVA<span>AI Store</span></div>
+      <div class="logo" onclick="showPage('home')">ZYNC<span>AI Store</span></div>
       <div class="nav-links">
         <div class="nav-link active" onclick="showPage('home');setActiveNavLink(this)">Home</div>
         <div class="nav-link" onclick="showPage('shop');setActiveNavLink(this)">Shop</div>
@@ -412,6 +460,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
         <div class="search-results-dropdown" id="search-dropdown"></div>
       </div>
       <div class="nav-actions">
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle theme">
+          <span class="theme-toggle-icon-dark">🌙</span>
+          <span class="theme-toggle-icon-light">☀️</span>
+        </button>
         <div class="nav-badge">
           <button class="btn-icon" onclick="openCart()" title="Cart">🛒
             <span class="cart-count" id="cart-count">0</span>
@@ -436,7 +488,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
       <div class="hero-content">
         <div class="hero-tag">🤖 <span>AI-Powered Recommendations</span></div>
         <h1 class="hero-title">Shop Smarter with <em>Artificial Intelligence</em></h1>
-        <p class="hero-sub">NOVA learns your taste and curates the perfect products just for you — from 50+ premium brands across every category.</p>
+        <p class="hero-sub">ZYNC learns your taste and curates the perfect products just for you — from 50+ premium brands across every category.</p>
         <div class="hero-btns">
           <button class="btn btn-primary btn-lg" onclick="showPage('shop')">Explore Store →</button>
           <button class="btn btn-outline btn-lg" onclick="document.getElementById('ai-picks').scrollIntoView({behavior:'smooth'})">See AI Picks ✨</button>
@@ -583,8 +635,8 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
   <div class="container">
     <div class="footer-grid">
       <div class="footer-brand">
-        <div class="logo">NOVA<span>AI Store</span></div>
-        <p class="footer-desc">AI-powered shopping that learns your preferences and delivers the perfect recommendations every time you visit.</p>
+        <div class="logo">ZYNC<span>AI Store</span></div>
+        <p class="footer-desc">ZYNC is an AI-powered shopping experience that learns your preferences and delivers the perfect recommendations every time you visit.</p>
       </div>
       <div class="footer-col"><h4>Shop</h4>
         <a onclick="showPage('shop')">All Products</a>
@@ -607,7 +659,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
       </div>
     </div>
     <div class="footer-bottom">
-      <span>© 2024 NOVA AI Store. All rights reserved.</span>
+      <span>© 2024 ZYNC AI Store. All rights reserved.</span>
       <span>Built with ❤️ + 🤖 AI · Flask · Scikit-learn</span>
     </div>
   </div>
@@ -633,7 +685,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;heigh
 <div class="modal" id="auth-modal">
   <div class="modal-box">
     <div class="modal-header">
-      <h3 class="modal-title" id="auth-title">Welcome to NOVA</h3>
+      <h3 class="modal-title" id="auth-title">Welcome to ZYNC</h3>
       <button class="btn-icon" onclick="closeModal('auth-modal')">✕</button>
     </div>
     <div class="modal-body" id="auth-body"></div>
@@ -785,7 +837,7 @@ function renderAuthForm(mode) {
   const body = document.getElementById('auth-body');
 
   if (mode === 'login') {
-    title.textContent = 'Sign In to NOVA';
+    title.textContent = 'Sign In to ZYNC';
     body.innerHTML = `
       <p style="color:var(--text3);font-size:13px;margin-bottom:20px">Welcome back! Sign in to access your cart, orders, and AI picks.</p>
       <div class="form-group"><label>Email</label><input type="email" id="auth-email" placeholder="you@example.com"/></div>
@@ -1434,68 +1486,18 @@ function renderCheckout() {
   } else if(checkoutStep===2) {
     body.innerHTML = stepsHtml + `
       <h3 style="margin-bottom:20px;font-size:18px">Payment Details</h3>
-      <div style="display:flex;gap:8px;margin-bottom:24px" id="pay-tabs">
-        <div class="pay-tab active" onclick="switchPayTab('card',this)" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--accent);background:var(--accent-bg);font-size:13px;font-weight:600;color:var(--accent);text-align:center;cursor:pointer">💳 Card</div>
-        <div class="pay-tab" onclick="switchPayTab('upi',this)" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border2);font-size:13px;font-weight:500;color:var(--text3);text-align:center;cursor:pointer">📱 UPI</div>
-        <div class="pay-tab" onclick="switchPayTab('netbanking',this)" style="flex:1;padding:10px;border-radius:8px;border:1px solid var(--border2);font-size:13px;font-weight:500;color:var(--text3);text-align:center;cursor:pointer">🏦 Net Banking</div>
+      <div style="display:flex;gap:8px;margin-bottom:20px">
+        <div style="padding:8px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent-bg);font-size:13px;font-weight:600;color:var(--accent)">💳 Card</div>
+        <div style="padding:8px 14px;border-radius:8px;border:1px solid var(--border2);font-size:13px;color:var(--text3)">📱 UPI</div>
+        <div style="padding:8px 14px;border-radius:8px;border:1px solid var(--border2);font-size:13px;color:var(--text3)">🏦 Net Banking</div>
       </div>
-
-      <!-- CARD -->
-      <div id="pay-card">
-        <div class="form-group"><label>Card Number</label><input id="co-card" class="card-input" placeholder="1234  5678  9012  3456" maxlength="19" oninput="formatCard(this)"/></div>
-        <div class="form-row">
-          <div class="form-group"><label>Expiry Date</label><input id="co-exp" placeholder="MM/YY" maxlength="5"/></div>
-          <div class="form-group"><label>CVV</label><input id="co-cvv" type="password" placeholder="•••" maxlength="3"/></div>
-        </div>
-        <div class="form-group"><label>Cardholder Name</label><input id="co-cname" placeholder="Name on card" value="${currentUser.name}"/></div>
-        <div style="display:flex;gap:10px;margin-top:8px">
-          <img src="https://upload.wikimedia.org/wikipedia/commons/0/04/Visa.svg" style="height:24px;opacity:0.7"/>
-          <img src="https://upload.wikimedia.org/wikipedia/commons/2/2a/Mastercard-logo.svg" style="height:24px;opacity:0.7"/>
-          <img src="https://upload.wikimedia.org/wikipedia/commons/f/fa/American_Express_logo_%282018%29.svg" style="height:24px;opacity:0.7"/>
-          <img src="https://upload.wikimedia.org/wikipedia/commons/d/d1/RuPay.svg" style="height:24px;opacity:0.7"/>
-        </div>
+      <div class="form-group"><label>Card Number</label><input id="co-card" class="card-input" placeholder="1234  5678  9012  3456" maxlength="19" oninput="formatCard(this)"/></div>
+      <div class="form-row">
+        <div class="form-group"><label>Expiry Date</label><input id="co-exp" placeholder="MM/YY" maxlength="5"/></div>
+        <div class="form-group"><label>CVV</label><input id="co-cvv" type="password" placeholder="•••" maxlength="3"/></div>
       </div>
-
-      <!-- UPI -->
-      <div id="pay-upi" style="display:none">
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
-          ${['GPay','PhonePe','Paytm','BHIM'].map(app=>`
-            <div onclick="selectUPIApp(this,'${app}')" style="flex:1;min-width:80px;padding:14px 8px;border-radius:10px;border:1px solid var(--border2);text-align:center;cursor:pointer;transition:all 0.2s" class="upi-app-btn">
-              <div style="font-size:24px">${{GPay:'G',PhonePe:'Pe',Paytm:'P',BHIM:'B'}[app]}</div>
-              <div style="font-size:12px;margin-top:4px;color:var(--text2)">${app}</div>
-            </div>`).join('')}
-        </div>
-        <div class="form-group">
-          <label>Or enter UPI ID manually</label>
-          <input id="co-upi" placeholder="yourname@upi / yourname@okaxis"/>
-          <div style="font-size:12px;color:var(--text3);margin-top:5px">e.g. mobile@upi, name@okhdfcbank, name@ybl</div>
-        </div>
-        <div style="padding:12px 14px;background:rgba(61,214,140,0.08);border:1px solid rgba(61,214,140,0.2);border-radius:8px;font-size:13px;color:var(--green);margin-top:4px">
-          ✅ UPI payments are instant and 100% secure via NPCI
-        </div>
-      </div>
-
-      <!-- NET BANKING -->
-      <div id="pay-netbanking" style="display:none">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px">
-          ${['SBI','HDFC Bank','ICICI Bank','Axis Bank','Kotak Bank','Punjab National Bank'].map(bank=>`
-            <div onclick="selectBank(this,'${bank}')" style="padding:12px 14px;border-radius:8px;border:1px solid var(--border2);cursor:pointer;font-size:13px;font-weight:500;transition:all 0.2s;display:flex;align-items:center;gap:8px" class="bank-btn">
-              <span style="font-size:18px">🏦</span>${bank}
-            </div>`).join('')}
-        </div>
-        <div class="form-group">
-          <label>Other Banks</label>
-          <select id="co-bank-other">
-            <option value="">Select your bank...</option>
-            ${['Bank of Baroda','Canara Bank','Union Bank','IndusInd Bank','Yes Bank','Federal Bank','IDFC First Bank','Bank of India','Indian Bank','UCO Bank'].map(b=>`<option value="${b}">${b}</option>`).join('')}
-          </select>
-        </div>
-        <div style="padding:12px 14px;background:var(--blue-bg);border:1px solid rgba(79,158,255,0.2);border-radius:8px;font-size:13px;color:var(--blue);margin-top:4px">
-          ℹ️ You will be redirected to your bank's secure portal to complete payment
-        </div>
-      </div>
-
-      <div style="padding:14px;background:var(--accent-bg);border:1px solid var(--accent-bd);border-radius:8px;margin:20px 0;font-size:13px;color:var(--accent)">
+      <div class="form-group"><label>Cardholder Name</label><input id="co-cname" placeholder="Name on card" value="${currentUser.name}"/></div>
+      <div style="padding:14px;background:var(--accent-bg);border:1px solid var(--accent-bd);border-radius:8px;margin:16px 0;font-size:13px;color:var(--accent)">
         🔒 Your payment is secured with 256-bit SSL encryption
       </div>
       <div class="order-row total" style="margin-bottom:16px"><span>Order Total</span><span>${fmt(total)}</span></div>
@@ -1503,8 +1505,6 @@ function renderCheckout() {
         <button class="btn btn-outline" onclick="checkoutStep=1;renderCheckout()">← Back</button>
         <button class="btn btn-primary btn-lg" style="flex:1" onclick="confirmOrder()">Pay ${fmt(total)} →</button>
       </div>`;
-    window._payMethod = 'card';
-    window._selectedBank = '';
   } else if(checkoutStep===3) {
     // Success
     body.innerHTML = `
@@ -1524,41 +1524,6 @@ function renderCheckout() {
         </div>
       </div>`;
   }
-}
-
-function switchPayTab(method, el) {
-  window._payMethod = method;
-  document.querySelectorAll('.pay-tab').forEach(t => {
-    t.style.border = '1px solid var(--border2)';
-    t.style.background = 'transparent';
-    t.style.color = 'var(--text3)';
-  });
-  el.style.border = '1px solid var(--accent)';
-  el.style.background = 'var(--accent-bg)';
-  el.style.color = 'var(--accent)';
-  document.getElementById('pay-card').style.display = method==='card' ? 'block' : 'none';
-  document.getElementById('pay-upi').style.display  = method==='upi'  ? 'block' : 'none';
-  document.getElementById('pay-netbanking').style.display = method==='netbanking' ? 'block' : 'none';
-}
-
-function selectUPIApp(el, app) {
-  document.querySelectorAll('.upi-app-btn').forEach(b => {
-    b.style.border = '1px solid var(--border2)';
-    b.style.background = 'transparent';
-  });
-  el.style.border = '1px solid var(--accent)';
-  el.style.background = 'var(--accent-bg)';
-  document.getElementById('co-upi').value = `yourname@${app.toLowerCase()}`;
-}
-
-function selectBank(el, bank) {
-  document.querySelectorAll('.bank-btn').forEach(b => {
-    b.style.border = '1px solid var(--border2)';
-    b.style.background = 'transparent';
-  });
-  el.style.border = '1px solid var(--accent)';
-  el.style.background = 'var(--accent-bg)';
-  window._selectedBank = bank;
 }
 
 function formatCard(input) {
@@ -1582,6 +1547,7 @@ function goToPayment() {
   checkoutStep=2;
   renderCheckout();
 }
+
 async function confirmOrder() {
   const card = document.getElementById('co-card')?.value?.replace(/\s/g,'');
   const exp  = document.getElementById('co-exp')?.value;
@@ -1726,6 +1692,30 @@ async function submitReview(pid) {
 /* ─────────────────────────────────────────────────────────────────────────────
    INIT
 ───────────────────────────────────────────────────────────────────────────── */
+/* ─────────────────────────────────────────────────────────────────────────────
+   THEME
+───────────────────────────────────────────────────────────────────────────── */
+function toggleTheme() {
+  const html = document.documentElement;
+  const isLight = html.getAttribute('data-theme') === 'light';
+  if (isLight) {
+    html.removeAttribute('data-theme');
+    localStorage.setItem('zync-theme', 'dark');
+  } else {
+    html.setAttribute('data-theme', 'light');
+    localStorage.setItem('zync-theme', 'light');
+  }
+}
+
+function loadSavedTheme() {
+  const saved = localStorage.getItem('zync-theme');
+  if (saved === 'light') {
+    document.documentElement.setAttribute('data-theme', 'light');
+  }
+}
+
+loadSavedTheme();
+
 async function init() {
   renderNavAuth();
 
