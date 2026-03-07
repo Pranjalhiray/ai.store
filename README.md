@@ -11,7 +11,7 @@
 
 ## 🚀 Live Demo
 
-> Coming soon — deploying on Render.com
+> (https://ai-store-1wcn.onrender.com)
 
 ---
 
