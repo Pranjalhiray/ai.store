@@ -1,7 +1,7 @@
 flask
 flask-cors
 python-dotenv
-pymongo[srv]==4.6.3
+pymongo[srv]
 scikit-learn
 pandas
 numpy
