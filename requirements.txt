@@ -1,3 +1,4 @@
+# ZYNC AI Store dependencies
 flask
 flask-cors
 python-dotenv
