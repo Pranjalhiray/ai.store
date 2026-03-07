@@ -2,6 +2,7 @@
 AI Recommendation Engine
 Combines content-based filtering (tags, category, brand) with
 collaborative filtering signals (user behavior tracking).
+Uses lazy loading to save memory on deployment.
 """
 
 import pandas as pd
@@ -10,44 +11,51 @@ from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.preprocessing import MultiLabelBinarizer, MinMaxScaler
 from data.products import products
 
-# ── Build feature matrix ───────────────────────────────────────────────────────
-df = pd.DataFrame(products)
+# ── Lazy-loaded feature matrix ─────────────────────────────────────────────────
+df = None
+similarity_matrix = None
 
-mlb = MultiLabelBinarizer()
-tag_features = mlb.fit_transform(df['tags'])
-tag_df = pd.DataFrame(tag_features, columns=mlb.classes_)
+def _ensure_loaded():
+    """Load ML model only when first needed — saves memory on startup."""
+    global df, similarity_matrix
+    if df is not None:
+        return
 
-category_dummies = pd.get_dummies(df['category'], prefix='cat')
-brand_dummies    = pd.get_dummies(df['brand'],    prefix='brand')
+    df = pd.DataFrame(products)
 
-scaler = MinMaxScaler()
-price_norm  = scaler.fit_transform(df[['price']])
-rating_norm = scaler.fit_transform(df[['rating']])
+    mlb = MultiLabelBinarizer()
+    tag_features = mlb.fit_transform(df['tags'])
+    tag_df = pd.DataFrame(tag_features, columns=mlb.classes_)
 
-price_df  = pd.DataFrame(price_norm,  columns=['price_norm'])
-rating_df = pd.DataFrame(rating_norm, columns=['rating_norm'])
+    category_dummies = pd.get_dummies(df['category'], prefix='cat')
+    brand_dummies    = pd.get_dummies(df['brand'],    prefix='brand')
 
-# Weighted feature matrix
-features = pd.concat([
-    tag_df * 2.0,          # tags most important
-    category_dummies * 1.5,
-    brand_dummies * 1.0,
-    price_df  * 0.5,
-    rating_df * 0.8,
-], axis=1)
+    scaler = MinMaxScaler()
+    price_norm  = scaler.fit_transform(df[['price']])
+    rating_norm = scaler.fit_transform(df[['rating']])
 
-similarity_matrix = cosine_similarity(features)
+    price_df  = pd.DataFrame(price_norm,  columns=['price_norm'])
+    rating_df = pd.DataFrame(rating_norm, columns=['rating_norm'])
 
-# In-memory behavior store  {user_id: {product_id: score}}
-user_behavior: dict[str, dict[int, float]] = {}
+    features = pd.concat([
+        tag_df * 2.0,
+        category_dummies * 1.5,
+        brand_dummies * 1.0,
+        price_df  * 0.5,
+        rating_df * 0.8,
+    ], axis=1)
 
-SCORE_VIEW   = 1.0
-SCORE_LIKE   = 3.0
-SCORE_CART   = 5.0
-SCORE_BUY    = 10.0
+    similarity_matrix = cosine_similarity(features)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── In-memory behavior store ───────────────────────────────────────────────────
+user_behavior: dict = {}
+
+SCORE_VIEW = 1.0
+SCORE_LIKE = 3.0
+SCORE_CART = 5.0
+SCORE_BUY  = 10.0
+
 
 def _record(user_id: str, product_id: int, score: float):
     user_behavior.setdefault(user_id, {})
@@ -57,7 +65,7 @@ def _record(user_id: str, product_id: int, score: float):
 
 
 def _content_scores(product_id: int) -> np.ndarray:
-    """Return cosine-similarity scores for all products vs product_id."""
+    _ensure_loaded()
     try:
         idx = df[df['id'] == product_id].index[0]
         return similarity_matrix[idx]
@@ -65,25 +73,17 @@ def _content_scores(product_id: int) -> np.ndarray:
         return np.zeros(len(df))
 
 
-# ── Public API ─────────────────────────────────────────────────────────────────
-
 def track_event(user_id: str, product_id: int, event: str):
-    """Record a user interaction (view / like / cart / buy)."""
     score_map = {'view': SCORE_VIEW, 'like': SCORE_LIKE,
                  'cart': SCORE_CART, 'buy': SCORE_BUY}
     _record(user_id, product_id, score_map.get(event, 0))
 
 
 def get_recommendations(product_id: int, num: int = 6,
-                         user_id: str | None = None) -> list[dict]:
-    """
-    Content-based recommendations, boosted by user's past behavior
-    when user_id is provided.
-    """
+                        user_id: str = None) -> list:
+    _ensure_loaded()
     try:
         scores = _content_scores(product_id).copy()
-
-        # Collaborative boost: upweight products similar to what user liked
         if user_id and user_id in user_behavior:
             for pid, weight in user_behavior[user_id].items():
                 boost = _content_scores(pid) * (weight / 20.0)
@@ -96,24 +96,19 @@ def get_recommendations(product_id: int, num: int = 6,
         top = [s[0] for s in filtered[:num]]
 
         recs = df.iloc[top].to_dict('records')
-        # Attach match percentage
         max_score = max(s[1] for s in filtered) if filtered else 1
         for rec, (_, score) in zip(recs, filtered[:num]):
             rec['match'] = round(min(99, (score / max(max_score, 0.001)) * 99))
         return recs
-    except Exception as e:
+    except Exception:
         return []
 
 
-def get_personalized_feed(user_id: str, num: int = 12) -> list[dict]:
-    """
-    Fully personalized homepage feed based on user's behavior history.
-    Falls back to trending (highest rating × reviews) for new users.
-    """
+def get_personalized_feed(user_id: str, num: int = 12) -> list:
+    _ensure_loaded()
     behavior = user_behavior.get(user_id, {})
 
     if not behavior:
-        # Trending: rating × log(reviews)
         df2 = df.copy()
         df2['trend_score'] = df2['rating'] * np.log1p(df2['reviews'])
         trending = df2.nlargest(num, 'trend_score').to_dict('records')
@@ -121,12 +116,10 @@ def get_personalized_feed(user_id: str, num: int = 12) -> list[dict]:
             p['match'] = None
         return trending
 
-    # Aggregate similarity scores across all interacted products
     agg = np.zeros(len(df))
     for pid, weight in behavior.items():
         agg += _content_scores(pid) * weight
 
-    # Zero out already-interacted products
     for pid in behavior:
         idx_list = df[df['id'] == pid].index.tolist()
         if idx_list:
@@ -143,19 +136,22 @@ def get_personalized_feed(user_id: str, num: int = 12) -> list[dict]:
     return recs
 
 
-def get_trending(num: int = 8) -> list[dict]:
+def get_trending(num: int = 8) -> list:
+    _ensure_loaded()
     df2 = df.copy()
     df2['trend_score'] = df2['rating'] * np.log1p(df2['reviews'])
     return df2.nlargest(num, 'trend_score').to_dict('records')
 
 
-def get_category_picks(category: str, num: int = 6) -> list[dict]:
+def get_category_picks(category: str, num: int = 6) -> list:
+    _ensure_loaded()
     cat_df = df[df['category'] == category].copy()
     cat_df['score'] = cat_df['rating'] * np.log1p(cat_df['reviews'])
     return cat_df.nlargest(num, 'score').to_dict('records')
 
 
-def search_products(query: str, filters: dict | None = None) -> list[dict]:
+def search_products(query: str, filters: dict = None) -> list:
+    _ensure_loaded()
     q = query.lower().strip()
     results = []
     for p in products:
