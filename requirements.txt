@@ -1,8 +1,6 @@
-# ZYNC AI Store dependencies
 flask
 flask-cors
 python-dotenv
-pymongo[srv]
 scikit-learn
 pandas
 numpy
