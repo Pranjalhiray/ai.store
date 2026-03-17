@@ -1,11 +1,11 @@
 """
-AI Store — Flask Backend with MongoDB + Memory Fallback
+ZYNC AI Store — Flask Backend with PostgreSQL
 """
 
 from flask import Flask, jsonify, request, send_from_directory, session
 from flask_cors import CORS
 from dotenv import load_dotenv
-import os, uuid, hashlib, datetime
+import os, uuid, hashlib, datetime, json
 
 load_dotenv()
 
@@ -13,45 +13,93 @@ load_dotenv()
 app = Flask(__name__, static_folder='static')
 app.secret_key = os.getenv('SECRET_KEY', 'zync-ai-store-secret-2024')
 app.config.update(
-    SESSION_COOKIE_SECURE=True,
-    SESSION_COOKIE_SAMESITE='None',
+    SESSION_COOKIE_SECURE=False,
+    SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_HTTPONLY=True,
 )
 CORS(app, supports_credentials=True, origins=[
+    'http://localhost:5173',
     'http://localhost:5000',
     'http://127.0.0.1:5000',
+    'http://127.0.0.1:5173',
     'https://ai-store-1wcn.onrender.com'
 ])
 
-# ── MongoDB with fallback ──────────────────────────────────────────────────────
-MONGO_URI = os.getenv('MONGO_URI', '')
-db = None
-users_col = orders_col = reviews_col = None
+# ── PostgreSQL setup ────────────────────────────────────────────────────────────
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
-try:
-    if MONGO_URI:
-        from pymongo import MongoClient
-        client = MongoClient(MONGO_URI,
-                     serverSelectionTimeoutMS=3000,
-                     connectTimeoutMS=3000,
-                     socketTimeoutMS=3000,
-                     tls=True,
-                     tlsAllowInvalidCertificates=True)
-        client.admin.command('ping')  # test connection
-        db = client['zync']
-        users_col   = db['users']
-        orders_col  = db['orders']
-        reviews_col = db['reviews']
-        print("✅ MongoDB connected!")
-    else:
-        print("⚠️ No MONGO_URI — using memory storage")
-except Exception as e:
-    print(f"⚠️ MongoDB failed: {e} — using memory storage")
+DATABASE_URL = os.getenv('DATABASE_URL', '')
+_pg_conn = None
 
-# ── Memory fallback stores ─────────────────────────────────────────────────────
-_users   = {}   # {email: user}
-_orders  = {}   # {email: [orders]}
-_reviews = {}   # {pid: [reviews]}
+def get_db():
+    global _pg_conn
+    try:
+        if _pg_conn is None or _pg_conn.closed:
+            _pg_conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+            _pg_conn.autocommit = True
+        return _pg_conn
+    except Exception as e:
+        print(f"⚠️ DB connection error: {e}")
+        return None
+
+def init_db():
+    conn = get_db()
+    if not conn:
+        print("⚠️ No DATABASE_URL — using memory storage")
+        return False
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    email TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    password TEXT NOT NULL,
+                    avatar TEXT,
+                    phone TEXT DEFAULT '',
+                    cart JSONB DEFAULT '[]',
+                    wishlist JSONB DEFAULT '[]',
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS orders (
+                    id SERIAL PRIMARY KEY,
+                    user_email TEXT NOT NULL,
+                    order_id TEXT UNIQUE NOT NULL,
+                    items JSONB,
+                    address JSONB,
+                    payment JSONB,
+                    total FLOAT,
+                    status TEXT DEFAULT 'confirmed',
+                    tracking TEXT,
+                    estimated TEXT,
+                    date TIMESTAMP DEFAULT NOW()
+                );
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id TEXT PRIMARY KEY,
+                    product_id INTEGER NOT NULL,
+                    user_email TEXT,
+                    user_name TEXT,
+                    avatar TEXT,
+                    rating INTEGER,
+                    title TEXT,
+                    body TEXT,
+                    helpful INTEGER DEFAULT 0,
+                    date TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            """)
+        print("✅ PostgreSQL connected & tables ready!")
+        return True
+    except Exception as e:
+        print(f"⚠️ DB init error: {e}")
+        return False
+
+USE_PG = init_db()
+
+# ── Memory fallback ─────────────────────────────────────────────────────────────
+_users   = {}
+_orders  = {}
+_reviews = {}
 
 # ── Imports ────────────────────────────────────────────────────────────────────
 from data.products import products as PRODUCTS
@@ -60,69 +108,137 @@ from ml.recommender import (
     get_trending, get_category_picks, search_products, track_event
 )
 
-# ── DB helpers (work with both MongoDB and memory) ─────────────────────────────
-
-def _use_mongo():
-    return users_col is not None
+# ── DB helpers ─────────────────────────────────────────────────────────────────
 
 def _get_user(email):
-    if _use_mongo():
-        return users_col.find_one({'email': email}, {'_id': 0})
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE email = %s", (email,))
+                row = cur.fetchone()
+                if row:
+                    u = dict(row)
+                    u['cart'] = u.get('cart') or []
+                    u['wishlist'] = u.get('wishlist') or []
+                    return u
+            return None
+        except: return _users.get(email)
     return _users.get(email)
 
 def _save_user(user):
-    if _use_mongo():
-        users_col.update_one({'email': user['email']},
-                             {'$set': user}, upsert=True)
-    else:
-        _users[user['email']] = user
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE users SET name=%s, avatar=%s, phone=%s, cart=%s, wishlist=%s
+                    WHERE email=%s
+                """, (user['name'], user.get('avatar',''), user.get('phone',''),
+                      json.dumps(user.get('cart',[])), json.dumps(user.get('wishlist',[])),
+                      user['email']))
+            return
+        except: pass
+    _users[user['email']] = user
 
 def _insert_user(user):
-    if _use_mongo():
-        users_col.insert_one(dict(user))
-    else:
-        _users[user['email']] = dict(user)
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO users (email, name, password, avatar, phone, cart, wishlist)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (user['email'], user['name'], user['password'],
+                      user.get('avatar',''), user.get('phone',''),
+                      json.dumps([]), json.dumps([])))
+            return
+        except: pass
+    _users[user['email']] = dict(user)
 
 def _user_exists(email):
-    if _use_mongo():
-        return users_col.find_one({'email': email}) is not None
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM users WHERE email = %s", (email,))
+                return cur.fetchone() is not None
+        except: pass
     return email in _users
 
 def _get_orders(email):
-    if _use_mongo():
-        return list(orders_col.find({'user_email': email}, {'_id': 0}).sort('date', -1))
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM orders WHERE user_email = %s ORDER BY date DESC", (email,))
+                return [dict(r) for r in cur.fetchall()]
+        except: pass
     return _orders.get(email, [])
 
 def _insert_order(order):
-    if _use_mongo():
-        orders_col.insert_one(dict(order))
-    else:
-        _orders.setdefault(order['user_email'], []).insert(0, order)
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO orders (user_email, order_id, items, address, payment, total, status, tracking, estimated)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (order['user_email'], order['order_id'],
+                      json.dumps(order.get('items',[])),
+                      json.dumps(order.get('address',{})),
+                      json.dumps(order.get('payment',{})),
+                      order.get('total', 0), order.get('status','confirmed'),
+                      order.get('tracking',''), order.get('estimated','')))
+            return
+        except: pass
+    _orders.setdefault(order['user_email'], []).insert(0, order)
 
 def _get_reviews(pid):
-    if _use_mongo():
-        return list(reviews_col.find({'product_id': pid}, {'_id': 0}))
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM reviews WHERE product_id = %s ORDER BY created_at DESC", (pid,))
+                return [dict(r) for r in cur.fetchall()]
+        except: pass
     return _reviews.get(pid, [])
 
 def _insert_review(review):
-    if _use_mongo():
-        reviews_col.insert_one(dict(review))
-    else:
-        _reviews.setdefault(review['product_id'], []).insert(0, review)
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO reviews (id, product_id, user_email, user_name, avatar, rating, title, body, date)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (review['id'], review['product_id'], review.get('user_email',''),
+                      review.get('user',''), review.get('avatar',''),
+                      review.get('rating',5), review.get('title',''),
+                      review.get('body',''), review.get('date','')))
+            return
+        except: pass
+    _reviews.setdefault(review['product_id'], []).insert(0, review)
 
 def _update_cart(email, cart):
-    if _use_mongo():
-        users_col.update_one({'email': email}, {'$set': {'cart': cart}})
-    else:
-        if email in _users:
-            _users[email]['cart'] = cart
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET cart = %s WHERE email = %s", (json.dumps(cart), email))
+            return
+        except: pass
+    if email in _users: _users[email]['cart'] = cart
 
 def _update_wishlist(email, wishlist):
-    if _use_mongo():
-        users_col.update_one({'email': email}, {'$set': {'wishlist': wishlist}})
-    else:
-        if email in _users:
-            _users[email]['wishlist'] = wishlist
+    if USE_PG:
+        try:
+            conn = get_db()
+            with conn.cursor() as cur:
+                cur.execute("UPDATE users SET wishlist = %s WHERE email = %s", (json.dumps(wishlist), email))
+            return
+        except: pass
+    if email in _users: _users[email]['wishlist'] = wishlist
 
 # ── Utilities ──────────────────────────────────────────────────────────────────
 
@@ -210,19 +326,58 @@ def me():
 
 @app.route('/api/products', methods=['GET'])
 def get_products():
-    cat   = request.args.get('category','All')
-    brand = request.args.get('brand','')
-    sort  = request.args.get('sort','popular')
-    min_p = request.args.get('min_price', type=float)
-    max_p = request.args.get('max_price', type=float)
-    page  = request.args.get('page', 1, type=int)
-    limit = request.args.get('limit', 20, type=int)
+    cat    = request.args.get('category','All')
+    brand  = request.args.get('brand','')
+    sort   = request.args.get('sort','popular')
+    min_p  = request.args.get('min_price', type=float)
+    max_p  = request.args.get('max_price', type=float)
+    page   = request.args.get('page', 1, type=int)
+    limit  = request.args.get('limit', 20, type=int)
+    search = request.args.get('search','').lower().strip()
 
     items = list(PRODUCTS)
     if cat and cat != 'All': items = [p for p in items if p['category']==cat]
     if brand: items = [p for p in items if p['brand']==brand]
     if min_p is not None: items = [p for p in items if p['price']>=min_p]
     if max_p is not None: items = [p for p in items if p['price']<=max_p]
+
+    # Smart natural language search
+    if search:
+        # Extract price from query like "under 5000" or "below 5000"
+        import re
+        price_match = re.search(r'(?:under|below|less than|upto|up to)\s*[₹rs]?\s*(\d+)', search)
+        if price_match:
+            max_price = float(price_match.group(1))
+            items = [p for p in items if p['price'] <= max_price]
+            # Remove price part from search
+            search = re.sub(r'(?:under|below|less than|upto|up to)\s*[₹rs]?\s*\d+', '', search).strip()
+
+        if search:
+            def score(p):
+                s = 0
+                name = p['name'].lower()
+                brand_l = p['brand'].lower()
+                cat_l = p['category'].lower()
+                tags = ' '.join(p.get('tags', [])).lower()
+                words = search.split()
+                for word in words:
+                    if len(word) < 2: continue
+                    if word in name: s += 10
+                    if word in brand_l: s += 8
+                    if word in cat_l: s += 6
+                    if word in tags: s += 4
+                    # Partial match
+                    if any(word in t for t in name.split()): s += 3
+                return s
+
+            scored = [(p, score(p)) for p in items]
+            scored = [(p, s) for p, s in scored if s > 0]
+            if scored:
+                scored.sort(key=lambda x: -x[1])
+                items = [p for p, _ in scored]
+            else:
+                # Fallback — return nothing matched
+                items = []
 
     sort_map = {
         'popular':   lambda x: -x['reviews'],
@@ -232,7 +387,9 @@ def get_products():
         'newest':    lambda x: -x['id'],
         'discount':  lambda x: -(x['original_price']-x['price']),
     }
-    items.sort(key=sort_map.get(sort, sort_map['popular']))
+    if not search:
+        items.sort(key=sort_map.get(sort, sort_map['popular']))
+
     total = len(items)
     paged = items[(page-1)*limit : page*limit]
     return _ok(paged, total=total, page=page,
@@ -445,6 +602,794 @@ def update_profile():
         if f in d: user[f] = d[f]
     _save_user(user)
     return _ok(_safe(_current_user()))
+
+# ══════════════════════════════════════════════════════════════════════════════
+# AI FEATURES — Powered by Gemini
+# ══════════════════════════════════════════════════════════════════════════════
+
+from google import genai as _genai
+
+def _gemini(system, user_msg, max_tokens=1024):
+    """Call Gemini and return text response."""
+    key = os.getenv('GEMINI_API_KEY','')
+    if not key:
+        return None
+    try:
+        client = _genai.Client(api_key=key)
+        resp = client.models.generate_content(
+            model='gemini-2.0-flash',
+            contents=f"{system}\n\n{user_msg}"
+        )
+        return resp.text
+    except Exception as e:
+        print(f"⚠️ Gemini error: {e}")
+        return None
+
+
+# ── 1. AI Shopping Assistant ───────────────────────────────────────────────────
+@app.route('/api/ai/chat', methods=['POST'])
+def ai_chat():
+    d       = request.get_json() or {}
+    message = d.get('message','')
+    history = d.get('history', [])
+    user    = _current_user()
+
+    product_list = '\n'.join([
+        f"- ID:{p['id']} {p['name']} | {p['category']} | ₹{p['price']} | Brand:{p['brand']} | Rating:{p['rating']} | Tags:{','.join(p['tags'])}"
+        for p in PRODUCTS
+    ])
+
+    system = f"""You are ZYNC's friendly AI shopping assistant. You help customers find perfect products.
+You have access to these {len(PRODUCTS)} products:
+{product_list}
+
+Rules:
+- Be conversational, fun and helpful
+- When recommending products, always mention their ID like [ID:5]
+- Keep responses concise (2-4 sentences max)
+- If asked about price, suggest products within their budget
+- Use emojis occasionally to be friendly
+- Current user: {user['name'] if user else 'Guest'}"""
+
+    messages = history + [{'role':'user','content':message}]
+
+    # Build conversation as single prompt for Gemini
+    conv = '\n'.join([f"{m['role'].upper()}: {m['content']}" for m in messages])
+    reply = _gemini(system, conv, max_tokens=512)
+    if not reply:
+        return _err('AI not configured.')
+
+    # Extract product IDs mentioned in response
+    import re
+    ids = [int(x) for x in re.findall(r'\[ID:(\d+)\]', reply)]
+    suggested = [p for p in PRODUCTS if p['id'] in ids]
+
+    return _ok({'reply': reply, 'suggested_products': suggested})
+
+
+# ── 2. AI Smart Search ────────────────────────────────────────────────────────
+@app.route('/api/ai/smart-search', methods=['POST'])
+def ai_smart_search():
+    d     = request.get_json() or {}
+    query = d.get('query', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']} | tags:{','.join(p['tags'])}"
+        for p in PRODUCTS
+    ])
+
+    system = """You are a smart product search engine. Given a natural language query, find matching products.
+Return ONLY a JSON array of product IDs that match, ordered by relevance. Example: [5, 12, 3]
+Return empty array [] if nothing matches. No explanation, just the JSON array."""
+
+    result = _gemini(system, f"Products:\n{product_list}\n\nQuery: {query}")
+    if not result:
+        return _err('AI not configured.')
+
+    import re, json
+    match = re.search(r'\[[\d,\s]*\]', result)
+    ids = json.loads(match.group()) if match else []
+    products = [p for p in PRODUCTS if p['id'] in ids]
+    return _ok(products, query=query, total=len(products))
+
+
+# ── 3. AI Style Advisor ────────────────────────────────────────────────────────
+@app.route('/api/ai/style-advisor', methods=['POST'])
+def ai_style_advisor():
+    d         = request.get_json() or {}
+    style     = d.get('style', '')
+    occasion  = d.get('occasion', '')
+    budget    = d.get('budget', '')
+    gender    = d.get('gender', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']}"
+        for p in PRODUCTS if p['category'] in ['Shoes','Clothing','Bags','Beauty']
+    ])
+
+    system = """You are ZYNC's personal AI style advisor. Create complete outfit recommendations.
+Always respond in this exact JSON format:
+{
+  "outfit_name": "...",
+  "vibe": "...",
+  "description": "...",
+  "items": [ID1, ID2, ID3, ID4],
+  "styling_tip": "...",
+  "total_price": 0
+}
+Only include IDs from the provided product list. No extra text outside JSON."""
+
+    prompt = f"""Products available:
+{product_list}
+
+Customer wants:
+- Style: {style}
+- Occasion: {occasion}
+- Budget: ₹{budget}
+- Gender preference: {gender}
+
+Create a complete outfit."""
+
+    result = _gemini(system, prompt, max_tokens=512)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data  = json.loads(match.group())
+        items = [p for p in PRODUCTS if p['id'] in data.get('items',[])]
+        data['products'] = items
+        data['total_price'] = sum(p['price'] for p in items)
+        return _ok(data)
+    except:
+        return _err('Could not generate outfit.')
+
+
+# ── 4. AI Price Analyzer ──────────────────────────────────────────────────────
+@app.route('/api/ai/price-analyze/<int:pid>', methods=['GET'])
+def ai_price_analyze(pid):
+    product = next((p for p in PRODUCTS if p['id'] == pid), None)
+    if not product: return _err('Product not found.', 404)
+
+    similar = [p for p in PRODUCTS if p['category'] == product['category'] and p['id'] != pid]
+    avg_price = sum(p['price'] for p in similar) / len(similar) if similar else product['price']
+    discount  = round((product['original_price'] - product['price']) / product['original_price'] * 100)
+
+    system = """You are a price analysis AI. Analyze if a product is good value.
+Respond in JSON format only:
+{
+  "verdict": "Great Deal" | "Fair Price" | "Overpriced" | "Buy Now",
+  "score": 0-100,
+  "reason": "one sentence explanation",
+  "tip": "one actionable tip for the buyer"
+}
+No text outside JSON."""
+
+    prompt = f"""Product: {product['name']}
+Price: ₹{product['price']} (was ₹{product['original_price']})
+Discount: {discount}%
+Rating: {product['rating']}/5 from {product['reviews']} reviews
+Category avg price: ₹{avg_price:.0f}
+Brand: {product['brand']}"""
+
+    result = _gemini(system, prompt, max_tokens=256)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data  = json.loads(match.group())
+        data['discount'] = discount
+        data['avg_category_price'] = round(avg_price)
+        return _ok(data)
+    except:
+        return _err('Could not analyze price.')
+
+
+# ── 5. AI Review Summarizer ───────────────────────────────────────────────────
+@app.route('/api/ai/review-summary/<int:pid>', methods=['GET'])
+def ai_review_summary(pid):
+    product = next((p for p in PRODUCTS if p['id'] == pid), None)
+    if not product: return _err('Product not found.', 404)
+
+    reviews = _get_reviews(pid)
+
+    system = """You are a review analysis AI. Summarize product reviews.
+Respond in JSON only:
+{
+  "summary": "2 sentence overall summary",
+  "pros": ["pro1", "pro2", "pro3"],
+  "cons": ["con1", "con2"],
+  "verdict": "one word verdict",
+  "recommend": true or false
+}"""
+
+    if not reviews:
+        prompt = f"Product: {product['name']}, Rating: {product['rating']}/5, {product['reviews']} reviews. No written reviews yet — give a general assessment based on the rating and product type."
+    else:
+        review_text = '\n'.join([f"- {r['rating']}/5: {r['body']}" for r in reviews[:10]])
+        prompt = f"Product: {product['name']}\nReviews:\n{review_text}"
+
+    result = _gemini(system, prompt, max_tokens=256)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        return _ok(json.loads(match.group()))
+    except:
+        return _err('Could not summarize reviews.')
+
+
+# ── 6. AI Surprise Me ─────────────────────────────────────────────────────────
+@app.route('/api/ai/surprise', methods=['GET'])
+def ai_surprise():
+    user = _current_user()
+
+    behavior_str = ''
+    if user:
+        from ml.recommender import user_behavior
+        behavior = user_behavior.get(user['email'], {})
+        if behavior:
+            top = sorted(behavior.items(), key=lambda x: x[1], reverse=True)[:5]
+            viewed = [next((p for p in PRODUCTS if p['id']==pid), None) for pid,_ in top]
+            viewed = [p for p in viewed if p]
+            behavior_str = f"User recently liked: {', '.join(p['name'] for p in viewed)}"
+
+    product_list = '\n'.join([f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']}" for p in PRODUCTS])
+
+    system = """You are a fun AI shopper. Pick ONE perfect surprise product.
+Respond in JSON only:
+{
+  "product_id": 0,
+  "reason": "fun 1-sentence reason why this is perfect for them",
+  "surprise_message": "exciting 1-sentence message to show the user"
+}"""
+
+    prompt = f"{behavior_str}\n\nProducts:\n{product_list}\n\nPick the most surprising yet perfect product!"
+
+    result = _gemini(system, prompt, max_tokens=200)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match   = re.search(r'\{.*\}', result, re.DOTALL)
+        data    = json.loads(match.group())
+        pid     = int(data.get('product_id', 0))
+        product = next((p for p in PRODUCTS if p['id'] == pid), PRODUCTS[0])
+        data['product'] = product
+        return _ok(data)
+    except:
+        return _err('Could not pick surprise.')
+
+
+# ── 7. AI Taste Profile ───────────────────────────────────────────────────────
+@app.route('/api/ai/taste-profile', methods=['GET'])
+def ai_taste_profile():
+    user = _current_user()
+    if not user: return _err('Login required.', 401)
+
+    from ml.recommender import user_behavior
+    behavior = user_behavior.get(user['email'], {})
+
+    if not behavior:
+        return _ok({
+            'personality': 'Explorer',
+            'description': 'You\'re just getting started! Browse products to build your taste profile.',
+            'traits': ['Curious', 'Open-minded', 'Adventurous'],
+            'top_categories': [],
+            'top_brands': [],
+            'style_tags': [],
+            'empty': True
+        })
+
+    interacted = [next((p for p in PRODUCTS if p['id']==pid), None) for pid in behavior]
+    interacted = [p for p in interacted if p]
+
+    cats   = {}
+    brands = {}
+    tags   = {}
+    for p in interacted:
+        cats[p['category']]   = cats.get(p['category'], 0) + behavior.get(p['id'], 0)
+        brands[p['brand']]    = brands.get(p['brand'], 0) + behavior.get(p['id'], 0)
+        for t in p['tags']:
+            tags[t] = tags.get(t, 0) + 1
+
+    top_cats   = sorted(cats.items(),   key=lambda x: x[1], reverse=True)[:3]
+    top_brands = sorted(brands.items(), key=lambda x: x[1], reverse=True)[:3]
+    top_tags   = sorted(tags.items(),   key=lambda x: x[1], reverse=True)[:6]
+
+    system = """You are a personality analyzer for a shopping app.
+Respond in JSON only:
+{
+  "personality": "one word personality type (e.g. Trendsetter, Minimalist, Explorer, Tech Geek, Fashionista, Athlete)",
+  "description": "2 sentence fun description of their shopping personality",
+  "traits": ["trait1", "trait2", "trait3"]
+}"""
+
+    prompt = f"""Shopping behavior:
+Top categories: {[c for c,_ in top_cats]}
+Top brands: {[b for b,_ in top_brands]}
+Top interests: {[t for t,_ in top_tags]}"""
+
+    result = _gemini(system, prompt, max_tokens=200)
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data  = json.loads(match.group()) if result and match else {
+            'personality': 'Explorer',
+            'description': 'You have eclectic taste across multiple categories!',
+            'traits': ['Curious', 'Diverse', 'Adventurous']
+        }
+        data['top_categories'] = [c for c,_ in top_cats]
+        data['top_brands']     = [b for b,_ in top_brands]
+        data['style_tags']     = [t for t,_ in top_tags]
+        data['empty']          = False
+        return _ok(data)
+    except:
+        return _err('Could not build taste profile.')
+
+# ══════════════════════════════════════════════════════════════════════════════
+# ADVANCED AI FEATURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── 8. AI Gift Finder ─────────────────────────────────────────────────────────
+@app.route('/api/ai/gift-finder', methods=['POST'])
+def ai_gift_finder():
+    d = request.get_json() or {}
+    person = d.get('person', '')
+    age = d.get('age', '')
+    interests = d.get('interests', '')
+    budget = d.get('budget', '')
+    occasion = d.get('occasion', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']} | tags:{','.join(p['tags'])}"
+        for p in PRODUCTS
+    ])
+
+    system = """You are an expert gift advisor AI. Find perfect gift recommendations.
+Respond in JSON only:
+{
+  "gift_message": "warm personalized message about why these gifts are perfect",
+  "top_pick_id": 0,
+  "top_pick_reason": "why this is THE perfect gift",
+  "other_ids": [0, 0, 0],
+  "gift_tip": "one thoughtful tip for presenting the gift"
+}"""
+
+    prompt = f"""Person: {person}
+Age: {age}
+Interests: {interests}
+Budget: ₹{budget}
+Occasion: {occasion}
+
+Products:
+{product_list}
+
+Find the most thoughtful gift options."""
+
+    result = _gemini(system, prompt)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data = json.loads(match.group())
+        top = next((p for p in PRODUCTS if p['id'] == int(data.get('top_pick_id', 0))), None)
+        others = [p for p in PRODUCTS if p['id'] in data.get('other_ids', [])]
+        data['top_pick'] = top
+        data['other_products'] = others
+        return _ok(data)
+    except:
+        return _err('Could not find gifts.')
+
+
+# ── 9. AI Personal Shopper ────────────────────────────────────────────────────
+@app.route('/api/ai/personal-shopper', methods=['POST'])
+def ai_personal_shopper():
+    d = request.get_json() or {}
+    message = d.get('message', '')
+    history = d.get('history', [])
+    preferences = d.get('preferences', {})
+    user = _current_user()
+
+    product_list = '\n'.join([
+        f"- ID:{p['id']} {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']} | Rating:{p['rating']} | tags:{','.join(p['tags'])}"
+        for p in PRODUCTS
+    ])
+
+    prefs_str = ', '.join([f"{k}: {v}" for k, v in preferences.items()]) if preferences else 'none yet'
+
+    system = f"""You are Alex, a warm and witty personal shopping friend — not a bot. You're knowledgeable, fun, and genuinely care about helping people find great products.
+
+You remember everything shared in this conversation. You use the person's name when you know it, make jokes, give honest opinions, and push back if something isn't right for them.
+
+Known preferences: {prefs_str}
+Current user: {user['name'] if user else 'friend'}
+
+Products you can recommend:
+{product_list}
+
+Rules:
+- Talk like a real friend, not a corporate assistant
+- When recommending, mention product IDs like [ID:5]
+- Remember what was discussed earlier in the chat
+- Be opinionated — say things like "honestly, skip that one" or "this is SO good"
+- Keep responses to 3-5 sentences max
+- Extract preferences naturally (budget, style, brands they like) and remember them"""
+
+    conv = '\n'.join([f"{m['role'].upper()}: {m['content']}" for m in history[-8:]])
+    if conv:
+        prompt = f"Previous conversation:\n{conv}\n\nUSER: {message}"
+    else:
+        prompt = f"USER: {message}"
+
+    reply = _gemini(system, prompt)
+    if not reply:
+        return _err('AI not configured.')
+
+    import re
+    ids = [int(x) for x in re.findall(r'\[ID:(\d+)\]', reply)]
+    suggested = [p for p in PRODUCTS if p['id'] in ids]
+
+    # Extract preferences from conversation
+    new_prefs = {}
+    if 'budget' in message.lower() or '₹' in message:
+        nums = re.findall(r'[\d,]+', message.replace(',', ''))
+        if nums:
+            new_prefs['budget'] = f"₹{nums[-1]}"
+
+    return _ok({'reply': reply, 'suggested_products': suggested, 'extracted_preferences': new_prefs})
+
+
+# ── 10. AI Shopping Goals ─────────────────────────────────────────────────────
+@app.route('/api/ai/shopping-goals', methods=['POST'])
+def ai_shopping_goals():
+    d = request.get_json() or {}
+    goal = d.get('goal', '')
+    budget = d.get('budget', '')
+    timeline = d.get('timeline', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']}"
+        for p in PRODUCTS
+    ])
+
+    system = """You are a smart shopping planner AI. Create a complete shopping plan to achieve the user's goal.
+Respond in JSON only:
+{
+  "plan_title": "catchy title for this shopping plan",
+  "summary": "2 sentence overview of the plan",
+  "phases": [
+    {
+      "phase": "Phase 1",
+      "title": "phase title",
+      "description": "what this phase achieves",
+      "product_ids": [1, 2, 3],
+      "phase_budget": 0
+    }
+  ],
+  "total_cost": 0,
+  "savings_tip": "one money-saving tip",
+  "success_metric": "how to know when goal is achieved"
+}"""
+
+    prompt = f"""Goal: {goal}
+Total Budget: ₹{budget}
+Timeline: {timeline}
+
+Available Products:
+{product_list}
+
+Create a detailed phased shopping plan."""
+
+    result = _gemini(system, prompt, max_tokens=1024)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data = json.loads(match.group())
+        for phase in data.get('phases', []):
+            phase['products'] = [p for p in PRODUCTS if p['id'] in phase.get('product_ids', [])]
+        return _ok(data)
+    except:
+        return _err('Could not create plan.')
+
+
+# ── 11. AI Occasion Planner ───────────────────────────────────────────────────
+@app.route('/api/ai/occasion-planner', methods=['POST'])
+def ai_occasion_planner():
+    d = request.get_json() or {}
+    occasion = d.get('occasion', '')
+    timeline = d.get('timeline', '')
+    budget = d.get('budget', '')
+    details = d.get('details', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']}"
+        for p in PRODUCTS
+    ])
+
+    system = """You are an expert occasion planning AI. Create a complete preparation plan.
+Respond in JSON only:
+{
+  "occasion_title": "title",
+  "urgency": "Urgent" | "Comfortable" | "Plenty of Time",
+  "overview": "2 sentence overview",
+  "checklist": [
+    {
+      "category": "category name",
+      "items_needed": ["item1", "item2"],
+      "product_ids": [1, 2],
+      "priority": "Must Have" | "Nice to Have"
+    }
+  ],
+  "timeline_tip": "when to buy what",
+  "budget_breakdown": {"essentials": 0, "accessories": 0, "extras": 0},
+  "pro_tip": "one expert tip for this occasion"
+}"""
+
+    prompt = f"""Occasion: {occasion}
+Timeline: {timeline}
+Budget: ₹{budget}
+Details: {details}
+
+Products:
+{product_list}
+
+Create a complete preparation checklist."""
+
+    result = _gemini(system, prompt, max_tokens=1024)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data = json.loads(match.group())
+        for item in data.get('checklist', []):
+            item['products'] = [p for p in PRODUCTS if p['id'] in item.get('product_ids', [])]
+        return _ok(data)
+    except:
+        return _err('Could not create plan.')
+
+
+# ── 12. AI Review Emotion Analyzer ───────────────────────────────────────────
+@app.route('/api/ai/emotion-analysis/<int:pid>', methods=['GET'])
+def ai_emotion_analysis(pid):
+    product = next((p for p in PRODUCTS if p['id'] == pid), None)
+    if not product:
+        return _err('Product not found.', 404)
+
+    reviews = _get_reviews(pid)
+
+    system = """You are an emotion analysis AI for product reviews. Analyze the emotional tone.
+Respond in JSON only:
+{
+  "overall_sentiment": "Positive" | "Mixed" | "Negative",
+  "sentiment_score": 0-100,
+  "emotions": {
+    "happiness": 0-100,
+    "trust": 0-100,
+    "excitement": 0-100,
+    "frustration": 0-100,
+    "disappointment": 0-100,
+    "satisfaction": 0-100
+  },
+  "top_positive_aspect": "what customers love most",
+  "top_concern": "what bothers customers most",
+  "buyer_confidence": "High" | "Medium" | "Low",
+  "emotional_summary": "2 sentence human summary of the emotional landscape"
+}"""
+
+    if not reviews:
+        prompt = f"Product: {product['name']}, Rating: {product['rating']}/5 from {product['reviews']} reviews. No written reviews — analyze based on rating and product type."
+    else:
+        review_text = '\n'.join([f"- {r['rating']}/5: {r['body']}" for r in reviews[:15]])
+        prompt = f"Product: {product['name']}\nReviews:\n{review_text}"
+
+    result = _gemini(system, prompt)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        return _ok(json.loads(match.group()))
+    except:
+        return _err('Could not analyze emotions.')
+
+
+# ── 13. AI Style DNA ──────────────────────────────────────────────────────────
+@app.route('/api/ai/style-dna', methods=['POST'])
+def ai_style_dna():
+    d = request.get_json() or {}
+    vibe = d.get('vibe', '')
+    inspirations = d.get('inspirations', '')
+    lifestyle = d.get('lifestyle', '')
+    avoid = d.get('avoid', '')
+
+    product_list = '\n'.join([
+        f"ID:{p['id']} | {p['name']} | {p['category']} | ₹{p['price']} | {p['brand']} | tags:{','.join(p['tags'])}"
+        for p in PRODUCTS if p['category'] in ['Shoes','Clothing','Bags','Beauty']
+    ])
+
+    system = """You are a fashion DNA analyst AI. Build a complete style identity profile.
+Respond in JSON only:
+{
+  "style_name": "unique name for their style (e.g. 'Urban Minimalist', 'Bold Explorer')",
+  "style_tagline": "one sentence that captures their essence",
+  "dna_traits": ["trait1", "trait2", "trait3", "trait4", "trait5"],
+  "color_palette": ["color1", "color2", "color3"],
+  "signature_pieces": [product_id1, product_id2, product_id3, product_id4],
+  "style_rules": ["rule1", "rule2", "rule3"],
+  "avoid_list": ["thing1", "thing2"],
+  "style_icon": "a famous person or character with similar style",
+  "evolution_tip": "how to evolve this style further"
+}"""
+
+    prompt = f"""Vibe description: {vibe}
+Style inspirations: {inspirations}
+Lifestyle: {lifestyle}
+What to avoid: {avoid}
+
+Fashion products:
+{product_list}
+
+Build their complete style DNA."""
+
+    result = _gemini(system, prompt, max_tokens=512)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data = json.loads(match.group())
+        data['signature_products'] = [p for p in PRODUCTS if p['id'] in data.get('signature_pieces', [])]
+        return _ok(data)
+    except:
+        return _err('Could not build style DNA.')
+
+
+# ── 14. AI Deal Sniper ────────────────────────────────────────────────────────
+@app.route('/api/ai/deal-sniper', methods=['GET'])
+def ai_deal_sniper():
+    import statistics
+
+    # Calculate value scores for all products
+    scored = []
+    for p in PRODUCTS:
+        if p['original_price'] > p['price']:
+            discount = (p['original_price'] - p['price']) / p['original_price'] * 100
+        else:
+            discount = 0
+
+        # Get category average price
+        cat_prices = [x['price'] for x in PRODUCTS if x['category'] == p['category'] and x['id'] != p['id']]
+        avg = statistics.mean(cat_prices) if cat_prices else p['price']
+        price_vs_avg = (avg - p['price']) / avg * 100 if avg > 0 else 0
+
+        value_score = (
+            discount * 0.35 +
+            p['rating'] * 10 * 0.30 +
+            max(0, price_vs_avg) * 0.20 +
+            min(p['reviews'] / 1000 * 100, 100) * 0.15
+        )
+        scored.append({**p, 'value_score': round(value_score, 1), 'discount': round(discount), 'price_vs_avg': round(price_vs_avg, 1)})
+
+    top_deals = sorted(scored, key=lambda x: x['value_score'], reverse=True)[:8]
+
+    product_summary = '\n'.join([
+        f"ID:{p['id']} {p['name']} | Score:{p['value_score']} | Discount:{p['discount']}% | vs avg:{p['price_vs_avg']}%"
+        for p in top_deals
+    ])
+
+    system = """You are a deals analyst AI. Review these top value products and give insights.
+Respond in JSON only:
+{
+  "sniper_report": "2 sentence overview of today's best deals",
+  "top_deal_id": 0,
+  "top_deal_reason": "why this is the absolute best deal right now",
+  "hidden_gem_id": 0,
+  "hidden_gem_reason": "why this underrated product is worth attention",
+  "market_insight": "one insight about pricing trends in these products"
+}"""
+
+    result = _gemini(system, product_summary)
+
+    import json, re
+    ai_insights = {}
+    if result:
+        try:
+            match = re.search(r'\{.*\}', result, re.DOTALL)
+            ai_insights = json.loads(match.group())
+        except:
+            pass
+
+    return _ok({
+        'deals': top_deals,
+        'insights': ai_insights
+    })
+
+
+# ── 15. AI Shopping Coach ─────────────────────────────────────────────────────
+@app.route('/api/ai/shopping-coach', methods=['POST'])
+def ai_shopping_coach():
+    user = _current_user()
+    if not user:
+        return _err('Login required.', 401)
+
+    cart_items = _get_user(user['email']).get('cart', [])
+    if not cart_items:
+        return _ok({
+            'score': 0,
+            'verdict': 'Empty Cart',
+            'message': 'Your cart is empty! Start shopping and I\'ll coach you.',
+            'items_analysis': [],
+            'empty': True
+        })
+
+    cart_products = []
+    for item in cart_items:
+        product = next((p for p in PRODUCTS if p['id'] == item['id']), None)
+        if product:
+            cart_products.append({**product, 'quantity': item['quantity']})
+
+    total = sum(p['price'] * p['quantity'] for p in cart_products)
+    cart_summary = '\n'.join([
+        f"- {p['name']} | ₹{p['price']} x{p['quantity']} | Rating:{p['rating']} | Discount:{round((p['original_price']-p['price'])/p['original_price']*100)}%"
+        for p in cart_products
+    ])
+
+    system = """You are a brutally honest but kind shopping coach AI. Analyze the cart and give real advice.
+Respond in JSON only:
+{
+  "score": 0-100,
+  "verdict": "Smart Shopper" | "Decent Choices" | "Needs Review" | "Impulse Alert",
+  "overall_message": "2 sentence honest assessment",
+  "items_analysis": [
+    {
+      "name": "product name",
+      "judgment": "Smart Buy" | "Good Value" | "Consider Twice" | "Impulse Buy",
+      "reason": "one honest sentence",
+      "keep": true or false
+    }
+  ],
+  "best_item": "name of best value item in cart",
+  "questionable_item": "name of most questionable item",
+  "money_saving_tip": "specific tip to save money on this exact cart",
+  "total_verdict": "is this total worth it?"
+}"""
+
+    prompt = f"""Cart items:
+{cart_summary}
+Total: ₹{total}
+
+Analyze this cart honestly."""
+
+    result = _gemini(system, prompt)
+    if not result:
+        return _err('AI not configured.')
+
+    import json, re
+    try:
+        match = re.search(r'\{.*\}', result, re.DOTALL)
+        data = json.loads(match.group())
+        data['total'] = total
+        data['empty'] = False
+        return _ok(data)
+    except:
+        return _err('Could not analyze cart.')
 
 # ══════════════════════════════════════════════════════════════════════════════
 
