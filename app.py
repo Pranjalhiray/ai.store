@@ -10,7 +10,7 @@ import os, uuid, hashlib, datetime, json
 load_dotenv()
 
 # ── App setup ──────────────────────────────────────────────────────────────────
-app = Flask(__name__, static_folder='static')
+app = Flask(__name__, static_folder='frontend/dist', static_url_path='')
 app.secret_key = os.getenv('SECRET_KEY', 'zync-ai-store-secret-2024')
 app.config.update(
     SESSION_COOKIE_SECURE=False,
@@ -264,10 +264,13 @@ def _safe(user):
     return u
 
 # ── Static ─────────────────────────────────────────────────────────────────────
-@app.route('/')
-@app.route('/app')
-def frontend():
-    return send_from_directory('static', 'index.html')
+# To this:
+@app.route('/', defaults={'path': ''})
+@app.route('/<path:path>')
+def frontend(path):
+    if path and os.path.exists(os.path.join('frontend/dist', path)):
+        return send_from_directory('frontend/dist', path)
+    return send_from_directory('frontend/dist', 'index.html')
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AUTH
