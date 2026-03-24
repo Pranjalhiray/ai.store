@@ -793,19 +793,29 @@ Customer wants:
 Create a complete outfit."""
 
     result = _gemini(system, prompt, max_tokens=512)
-    if not result:
-        result = _smart_fallback(query='')
 
     import json, re
-    try:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        data  = json.loads(match.group())
-        items = [p for p in PRODUCTS if p['id'] in data.get('items',[])]
-        data['products'] = items
-        data['total_price'] = sum(p['price'] for p in items)
-        return _ok(data)
-    except:
-        return _err('Could not generate outfit.')
+    if result:
+        try:
+            match = re.search(r'\{.*\}', result, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                items = [p for p in PRODUCTS if p['id'] in data.get('items',[])]
+                data['products'] = items
+                data['total_price'] = sum(p['price'] for p in items)
+                return _ok(data)
+        except: pass
+
+    # Fallback outfit
+    fashion = [p for p in PRODUCTS if p['category'] in ['Clothing','Shoes','Bags']][:4]
+    return _ok({
+        'outfit_name': f'{style or "Casual"} Outfit',
+        'vibe': style or 'Casual',
+        'description': f'A perfect {occasion or "everyday"} outfit within your budget.',
+        'products': fashion,
+        'total_price': sum(p['price'] for p in fashion),
+        'styling_tip': 'Mix and match these pieces for a complete look!'
+    })
 
 
 # ── 4. AI Price Analyzer ──────────────────────────────────────────────────────
@@ -1037,20 +1047,31 @@ Products:
 Find the most thoughtful gift options."""
 
     result = _gemini(system, prompt)
-    if not result:
-        result = _smart_fallback(query='')
 
     import json, re
-    try:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        data = json.loads(match.group())
-        top = next((p for p in PRODUCTS if p['id'] == int(data.get('top_pick_id', 0))), None)
-        others = [p for p in PRODUCTS if p['id'] in data.get('other_ids', [])]
-        data['top_pick'] = top
-        data['other_products'] = others
-        return _ok(data)
-    except:
-        return _err('Could not find gifts.')
+    if result:
+        try:
+            match = re.search(r'\{.*\}', result, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                top = next((p for p in PRODUCTS if p['id'] == int(data.get('top_pick_id', 0))), None)
+                others = [p for p in PRODUCTS if p['id'] in data.get('other_ids', [])]
+                data['top_pick'] = top
+                data['other_products'] = others
+                return _ok(data)
+        except: pass
+
+    # Fallback gift suggestions
+    budget_int = int(budget) if str(budget).isdigit() else 5000
+    gifts = [p for p in PRODUCTS if p['price'] <= budget_int]
+    gifts = sorted(gifts, key=lambda x: -x['rating'])[:4]
+    return _ok({
+        'gift_message': f'Perfect gifts for {person or "your loved one"} on {occasion or "any occasion"}!',
+        'top_pick': gifts[0] if gifts else None,
+        'top_pick_reason': 'Highly rated and great value for money',
+        'other_products': gifts[1:],
+        'gift_tip': 'Add a personal note to make the gift extra special!'
+    })
 
 
 # ── 9. AI Personal Shopper ────────────────────────────────────────────────────
@@ -1161,18 +1182,35 @@ Available Products:
 Create a detailed phased shopping plan."""
 
     result = _gemini(system, prompt, max_tokens=1024)
-    if not result:
-        result = _smart_fallback(query='')
 
     import json, re
-    try:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        data = json.loads(match.group())
-        for phase in data.get('phases', []):
-            phase['products'] = [p for p in PRODUCTS if p['id'] in phase.get('product_ids', [])]
-        return _ok(data)
-    except:
-        return _err('Could not create plan.')
+    if result:
+        try:
+            match = re.search(r'\{.*\}', result, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                for phase in data.get('phases', []):
+                    phase['products'] = [p for p in PRODUCTS if p['id'] in phase.get('product_ids', [])]
+                return _ok(data)
+        except: pass
+
+    # Fallback plan
+    budget_int = int(budget) if str(budget).isdigit() else 10000
+    top = sorted(PRODUCTS, key=lambda x: -x['rating'])[:6]
+    affordable = [p for p in top if p['price'] <= budget_int // 2][:3]
+    return _ok({
+        'plan_title': f'Your {goal or "Shopping"} Plan',
+        'summary': f'A smart phased plan to achieve your goal within ₹{budget or "your budget"}.',
+        'phases': [
+            {'phase': 'Phase 1', 'title': 'Essentials First', 'description': 'Start with the must-haves', 'products': affordable[:2], 'phase_budget': budget_int // 2},
+            {'phase': 'Phase 2', 'title': 'Complete the Setup', 'description': 'Add complementary items', 'products': affordable[2:], 'phase_budget': budget_int // 2},
+        ],
+        'total_cost': sum(p['price'] for p in affordable),
+        'savings_tip': 'Buy Phase 1 first and wait for sales on Phase 2 items!',
+        'success_metric': f"You've achieved your {goal or 'goal'} within budget!"
+        }) 
+
+     
 
 
 # ── 11. AI Occasion Planner ───────────────────────────────────────────────────
@@ -1448,18 +1486,33 @@ Total: ₹{total}
 Analyze this cart honestly."""
 
     result = _gemini(system, prompt)
-    if not result:
-        result = _smart_fallback(query='')
 
     import json, re
-    try:
-        match = re.search(r'\{.*\}', result, re.DOTALL)
-        data = json.loads(match.group())
-        data['total'] = total
-        data['empty'] = False
-        return _ok(data)
-    except:
-        return _err('Could not analyze cart.')
+    if result:
+        try:
+            match = re.search(r'\{.*\}', result, re.DOTALL)
+            if match:
+                data = json.loads(match.group())
+                data['total'] = total
+                data['empty'] = False
+                return _ok(data)
+        except: pass
+
+    # Fallback cart analysis
+    avg_rating = sum(p['rating'] for p in cart_products) / len(cart_products) if cart_products else 0
+    score = min(100, int(avg_rating * 20))
+    return _ok({
+        'score': score,
+        'verdict': 'Smart Shopper' if score >= 80 else 'Decent Choices',
+        'overall_message': f'Your cart has {len(cart_products)} items worth ₹{total:,}. Overall a solid selection!',
+        'items_analysis': [{'name': p['name'], 'judgment': 'Good Value', 'reason': f'Rated {p["rating"]}/5 with great reviews.', 'keep': True} for p in cart_products],
+        'best_item': cart_products[0]['name'] if cart_products else '',
+        'questionable_item': '',
+        'money_saving_tip': 'Check our Deal Sniper for even better value alternatives!',
+        'total_verdict': f'₹{total:,} is a reasonable spend for these quality products.',
+        'total': total,
+        'empty': False
+    })
 
 # ══════════════════════════════════════════════════════════════════════════════
 

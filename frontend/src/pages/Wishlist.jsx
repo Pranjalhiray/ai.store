@@ -4,18 +4,32 @@ import { useApp } from '../context/AppContext';
 import ProductCard from '../components/ProductCard';
 
 export default function Wishlist() {
-  const { api, user, wishlist, toggleWishlist } = useApp();
+  const { api, user, wishlist } = useApp();
   const navigate = useNavigate();
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) { navigate('/'); return; }
-    api('/api/wishlist').then(r => {
-      if (r.success) setProducts(r.data);
+    loadWishlist();
+  }, [user, wishlist]);
+
+  const loadWishlist = async () => {
+    setLoading(true);
+    // wishlist contains IDs — fetch full product details
+    if (wishlist.length === 0) {
+      setProducts([]);
       setLoading(false);
-    });
-  }, [user]);
+      return;
+    }
+    // Fetch all products and filter by wishlist IDs
+    const r = await api('/api/products?limit=500');
+    if (r.success) {
+      const wished = r.data.filter(p => wishlist.includes(p.id));
+      setProducts(wished);
+    }
+    setLoading(false);
+  };
 
   if (!user) return null;
 
@@ -41,7 +55,7 @@ export default function Wishlist() {
         <div className="empty-state">
           <div className="empty-icon">❤️</div>
           <h3>Your wishlist is empty</h3>
-          <p>Save products you love by clicking the heart icon</p>
+          <p>Save products you love by clicking the ❤️ heart icon</p>
           <button className="btn btn-primary" style={{ marginTop: 16 }} onClick={() => navigate('/shop')}>Start Shopping</button>
         </div>
       ) : (
