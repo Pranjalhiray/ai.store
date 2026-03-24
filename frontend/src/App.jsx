@@ -14,6 +14,9 @@ import Orders from './pages/Orders';
 import Profile from './pages/Profile';
 
 import Wishlist from './pages/Wishlist';
+import Visualizations from './pages/Visualizations';
+import ImageSearch from './pages/ImageSearch';
+import Admin from './pages/Admin';
 
 function AppLayout() {
   const [cartOpen, setCartOpen] = useState(false);
@@ -33,6 +36,9 @@ function AppLayout() {
           <Route path="/orders" element={<Orders />} />
           <Route path="/profile" element={<Profile />} />
           <Route path="/wishlist" element={<Wishlist />} />
+          <Route path="/visualizations" element={<Visualizations />} />
+          <Route path="/image-search" element={<ImageSearch />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
