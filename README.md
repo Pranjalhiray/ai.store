@@ -151,7 +151,7 @@ ai-store/
 
 ## 🤝 Contributing
 
-Built by **Pranjal Hiray** as an AI portfolio project.
+Built by **Pranjal Hiray** as a E-COMMERCE AI RECOMMENDATION ENGINE.
 
 ---
 
